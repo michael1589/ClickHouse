@@ -1,12 +1,12 @@
 #pragma once
 
+#include <Core/Names.h>
+#include <Core/SortDescription.h>
+#include <Interpreters/AggregateDescription.h>
+#include <Interpreters/DatabaseAndTableWithAlias.h>
 #include <Interpreters/PreparedSets.h>
 #include <Interpreters/SubqueryForSet.h>
-#include <Interpreters/DatabaseAndTableWithAlias.h>
-#include <Core/SortDescription.h>
-#include <Core/Names.h>
 #include <Storages/ProjectionsDescription.h>
-#include <Interpreters/AggregateDescription.h>
 
 #include <memory>
 
@@ -37,6 +37,9 @@ using TreeRewriterResultPtr = std::shared_ptr<const TreeRewriterResult>;
 class ReadInOrderOptimizer;
 using ReadInOrderOptimizerPtr = std::shared_ptr<const ReadInOrderOptimizer>;
 
+class ReadInOrderOptimizerForDistinct;
+using ReadInOrderOptimizerForDistinctPtr = std::shared_ptr<const ReadInOrderOptimizerForDistinct>;
+
 class Cluster;
 using ClusterPtr = std::shared_ptr<Cluster>;
 
@@ -60,7 +63,9 @@ struct PrewhereInfo
 
     PrewhereInfo() = default;
     explicit PrewhereInfo(ActionsDAGPtr prewhere_actions_, String prewhere_column_name_)
-            : prewhere_actions(std::move(prewhere_actions_)), prewhere_column_name(std::move(prewhere_column_name_)) {}
+        : prewhere_actions(std::move(prewhere_actions_)), prewhere_column_name(std::move(prewhere_column_name_))
+    {
+    }
 
     std::string dump() const;
 };
@@ -94,10 +99,12 @@ struct InputOrderInfo
     InputOrderInfo(
         const SortDescription & order_key_fixed_prefix_descr_,
         const SortDescription & order_key_prefix_descr_,
-        int direction_, UInt64 limit_)
+        int direction_,
+        UInt64 limit_)
         : order_key_fixed_prefix_descr(order_key_fixed_prefix_descr_)
         , order_key_prefix_descr(order_key_prefix_descr_)
-        , direction(direction_), limit(limit_)
+        , direction(direction_)
+        , limit(limit_)
     {
     }
 
@@ -157,6 +164,9 @@ struct SelectQueryInfoBase
     /// Can be modified while reading from storage
     InputOrderInfoPtr input_order_info;
 
+    ReadInOrderOptimizerForDistinctPtr distinct_optimizer;
+    InputOrderInfoPtr distinct_order_info;
+
     /// Prepared sets are used for indices by storage engine.
     /// Example: x IN (1, 2, 3)
     PreparedSets sets;
@@ -180,7 +190,7 @@ struct SelectQueryInfoBase
 struct SelectQueryInfo : SelectQueryInfoBase
 {
     SelectQueryInfo() = default;
-    SelectQueryInfo(const SelectQueryInfo & other) : SelectQueryInfoBase(other) {}
+    SelectQueryInfo(const SelectQueryInfo & other) : SelectQueryInfoBase(other) { }
 
     /// Make subquery_for_sets reusable across different interpreters.
     SubqueriesForSets subquery_for_sets;

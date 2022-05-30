@@ -1228,7 +1228,7 @@ void InterpreterSelectQuery::executeImpl(QueryPlan & query_plan, std::optional<P
                     executeOrder(query_plan, input_order_info_for_order);
 
                 if (expressions.has_order_by && query.limitLength())
-                    executeDistinct(query_plan, false, expressions.selected_columns, true);
+                    executeDistinct(query_plan, false, expressions.selected_columns, true, query_info.distinct_order_info);
 
                 if (expressions.hasLimitBy())
                 {
@@ -1385,7 +1385,7 @@ void InterpreterSelectQuery::executeImpl(QueryPlan & query_plan, std::optional<P
                     // now, on shards (first_stage).
                     assert(!expressions.before_window);
                     executeExpression(query_plan, expressions.before_order_by, "Before ORDER BY");
-                    executeDistinct(query_plan, true, expressions.selected_columns, true);
+                    executeDistinct(query_plan, true, expressions.selected_columns, true, query_info.distinct_order_info);
                 }
             }
 
@@ -1447,7 +1447,7 @@ void InterpreterSelectQuery::executeImpl(QueryPlan & query_plan, std::optional<P
                     "Before window functions");
                 executeWindow(query_plan);
                 executeExpression(query_plan, expressions.before_order_by, "Before ORDER BY");
-                executeDistinct(query_plan, true, expressions.selected_columns, true);
+                executeDistinct(query_plan, true, expressions.selected_columns, true, query_info.distinct_order_info);
             }
             else
             {
@@ -1455,7 +1455,7 @@ void InterpreterSelectQuery::executeImpl(QueryPlan & query_plan, std::optional<P
                 {
                     executeWindow(query_plan);
                     executeExpression(query_plan, expressions.before_order_by, "Before ORDER BY");
-                    executeDistinct(query_plan, true, expressions.selected_columns, true);
+                    executeDistinct(query_plan, true, expressions.selected_columns, true, query_info.distinct_order_info);
                 }
                 else
                 {
@@ -1520,7 +1520,7 @@ void InterpreterSelectQuery::executeImpl(QueryPlan & query_plan, std::optional<P
               * then DISTINCT needs to be performed once again after merging all streams.
               */
             if (!from_aggregation_stage && query.distinct)
-                executeDistinct(query_plan, false, expressions.selected_columns, false);
+                executeDistinct(query_plan, false, expressions.selected_columns, false, query_info.distinct_order_info);
 
             if (!from_aggregation_stage && expressions.hasLimitBy())
             {
@@ -2122,6 +2122,11 @@ void InterpreterSelectQuery::executeFetchColumns(QueryProcessingStage::Enum proc
             else
                 query_info.input_order_info = query_info.order_optimizer->getInputOrder(metadata_snapshot, context, limit);
         }
+        if (!analysis_result.optimize_aggregation_in_order && analysis_result.optimize_distinct_in_order)
+        {
+            query_info.distinct_optimizer = std::make_shared<ReadInOrderOptimizerForDistinct>(analysis_result.selected_columns);
+            query_info.distinct_order_info = query_info.distinct_optimizer->getInputOrder(storage, metadata_snapshot);
+        }
 
         StreamLocalLimits limits;
         SizeLimits leaf_limits;
@@ -2582,7 +2587,7 @@ void InterpreterSelectQuery::executeProjection(QueryPlan & query_plan, const Act
 }
 
 
-void InterpreterSelectQuery::executeDistinct(QueryPlan & query_plan, bool before_order, Names columns, bool pre_distinct)
+void InterpreterSelectQuery::executeDistinct(QueryPlan & query_plan, bool before_order, Names columns, bool pre_distinct, InputOrderInfoPtr distinct_info)
 {
     auto & query = getSelectQuery();
     if (query.distinct)
@@ -2599,8 +2604,11 @@ void InterpreterSelectQuery::executeDistinct(QueryPlan & query_plan, bool before
 
         SizeLimits limits(settings.max_rows_in_distinct, settings.max_bytes_in_distinct, settings.distinct_overflow_mode);
 
-        auto distinct_step
-            = std::make_unique<DistinctStep>(query_plan.getCurrentDataStream(), limits, limit_for_distinct, columns, pre_distinct);
+        if (distinct_info && !settings.optimize_distinct_in_order)
+            distinct_info = nullptr;
+
+        auto distinct_step = std::make_unique<DistinctStep>(
+            query_plan.getCurrentDataStream(), limits, limit_for_distinct, columns, pre_distinct, distinct_info);
 
         if (pre_distinct)
             distinct_step->setStepDescription("Preliminary DISTINCT");
